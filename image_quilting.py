@@ -38,7 +38,7 @@ class PatternsDataset(Dataset):
     
 class Pattern:
     def __init__(self, data, N):
-        self.data = data.astype(np.int32)
+        self.data = data.astype(np.int)
         self.N = N
         
     def __eq__(self, other):
@@ -68,10 +68,8 @@ class CreatePattern:
                                 take(range(j,j+self.N),mode='raise',axis=1), 
                                 self.N)
         res = set([t])
-        if self.ref:
-            res.add(Pattern(np.fliplr(t.data), self.N))
-        if self.rot:
-            res.add(Pattern(np.rot90(t.data), self.N))
+        if self.ref: res.add(Pattern(np.fliplr(t.data), self.N))
+        if self.rot: res.add(Pattern(np.rot90(t.data), self.N))
         return os.getpid(), res
 
 # define the possible tiles orientations
@@ -124,7 +122,7 @@ class Minimum_Cost_Path:
         return p
         
     def calc_cost(self):
-        self.cost = np.zeros(self.L2_error.shape, dtype=np.int32)
+        self.cost = np.zeros(self.L2_error.shape, dtype=np.int)
         # we don't need to calculate the first row
         self.cost[0,:] = self.L2_error[0,:]
         rows, cols = self.cost.shape        
@@ -151,169 +149,160 @@ class Minimum_Cost_Path:
         assert (L2_error >= 0).all() == True
         return L2_error
 
-def join_horizontal_blocks(blk1, blk2, path, debug=False):
-    G = [[0,255,0]] # green pixel
-    sl1 = blk1[:,-overlap_size:]
-    sl2 = blk2[:,:overlap_size]
-    a = path[0]
-    if debug:
-        join_row = lambda i : np.concatenate((sl1[i,:max(0, a-1)], G, sl2[i,max(a, 1):]))
-    else:
-        join_row = lambda i : np.concatenate((sl1[i,:a], sl2[i,a:]))
-    c = join_row(0)
-    res = np.zeros((block_size, overlap_size, 3), dtype=np.int32)
-    res[0,:] = c
-    for i in range(1, block_size):
-        a = path[i]
-        c = join_row(i)
-        res[i,:] = c
-    return np.hstack((res, blk2[:,overlap_size:]))
- 
-def join_vertical_blocks(blk1, blk2, path, debug=False):
-    G = [[0,255,0]] # green pixel
-    sl1 = blk1[-overlap_size:,:]
-    sl2 = blk2[:overlap_size,:]
-    a = path[0]
-    if debug:
-        join_col = lambda i : np.concatenate((sl1[:max(0, a-1),i], G, sl2[max(a, 1):,i]))
-    else:
-        join_col = lambda i : np.concatenate((sl1[:a,i], sl2[a:,i]))
-    c = join_col(0)
-    res = np.zeros((overlap_size, block_size, 3), dtype=np.int32)
-    res[:,0] = c
-    for i in range(1, block_size):
-        a = path[i]
-        c = join_col(i)
-        res[:,i] = c
-    return np.vstack((res, blk2[overlap_size:,:]))
-    
-def PatternsFromSample(sample, N):
-    patts = set()
-    h, w, _ = sample.shape
-    with futures.ProcessPoolExecutor() as pool:
-        createPattern = CreatePattern(sample, N)
-        for ident, toappend in pool.map(createPattern, 
-                                        product(range(0, h-N), range(0, w-N)),
-                                        chunksize=w):
-            patts.update(toappend)
-    return list(patts)
+class Image_Quilting:
+    def __init__(self, source_image, block_size, overlap_size, number_of_tiles_in_output):
+        self.block_size = block_size
+        self.overlap_size = overlap_size
+        self.number_of_tiles_in_output = number_of_tiles_in_output
+        
+        self.image_size = (2*(block_size-overlap_size)) + \
+            ((number_of_tiles_in_output-2)*(block_size-2*overlap_size)) + \
+            ((number_of_tiles_in_output-1)*overlap_size)
+            
+        self.patterns = self.patterns_from_sample(source_image)
+        random.shuffle(self.patterns)            
 
-def get_random_pattern(lst):
-    i = random.randint(0, len(lst))
-    return lst[i].data
-
-def get_best(lst, blks, N, orientation):
-    pq = []
-    pq_N = 1
-    heapq.heapify(pq) 
-    sample = random.sample(lst, N)
-    for patt in sample:
-        blk = patt.data
-        if orientation != Orientation.BOTH:
-            l2 = Minimum_Cost_Path.calc_L2_error(blks[0], blk, block_size, overlap_size, orientation)
-            err = l2.sum()
+    def patterns_from_sample(self, source_image):
+        patts = set()
+        N = self.block_size
+        h, w, _ = source_image.shape
+        with futures.ProcessPoolExecutor() as pool:
+            createPattern = CreatePattern(source_image, N)
+            for ident, toappend in pool.map(createPattern, 
+                                            product(range(0, h-N), range(0, w-N)),
+                                            chunksize=w):
+                patts.update(toappend)
+        return list(patts)
+        
+    def join_horizontal_blocks(self, blk1, blk2, path):
+        G = [[0,255,0]] # green pixel
+        sl1 = blk1[:,-self.overlap_size:]
+        sl2 = blk2[:,:self.overlap_size]
+        a = path[0]
+        if self.debug:
+            join_row = lambda i : np.concatenate((sl1[i,:max(0, a-1)], G, sl2[i,max(a, 1):]))
         else:
-            l2u = Minimum_Cost_Path.calc_L2_error(blks[0], blk, block_size, overlap_size, Orientation.BOTTOM_TOP)
-            l2l = Minimum_Cost_Path.calc_L2_error(blks[1], blk, block_size, overlap_size, Orientation.RIGHT_LEFT)
-            err = l2u.sum() + l2l.sum()
-        pqe = (-err, blk)
-        if len(pq) < pq_N:
-            heapq.heappush(pq, pqe)
+            join_row = lambda i : np.concatenate((sl1[i,:a], sl2[i,a:]))
+        c = join_row(0)
+        res = np.zeros((self.block_size, self.overlap_size, 3), dtype=np.int)
+        res[0,:] = c
+        for i in range(1, self.block_size):
+            a = path[i]
+            c = join_row(i)
+            res[i,:] = c
+        return np.hstack((res, blk2[:,self.overlap_size:]))
+     
+    def join_vertical_blocks(self, blk1, blk2, path):
+        G = [[0,255,0]] # green pixel
+        sl1 = blk1[-self.overlap_size:,:]
+        sl2 = blk2[:self.overlap_size,:]
+        a = path[0]
+        if self.debug:
+            join_col = lambda i : np.concatenate((sl1[:max(0, a-1),i], G, sl2[max(a, 1):,i]))
         else:
-            try:
-                heapq.heappushpop(pq, pqe)
-            except ValueError:
-                # skip errors related to duplicate values
-                pass            
-    return random.sample(pq, 1)[0][1]
-
-def add_block(img, blk, y, x, block_size, overlap_size):
-    dx = max(0, x*(block_size-overlap_size))
-    dy = max(0, y*(block_size-overlap_size))
-    img[dy:dy+block_size,dx:dx+block_size,:] = blk.copy()
+            join_col = lambda i : np.concatenate((sl1[:a,i], sl2[a:,i]))
+        c = join_col(0)
+        res = np.zeros((self.overlap_size, self.block_size, 3), dtype=np.int)
+        res[:,0] = c
+        for i in range(1, self.block_size):
+            a = path[i]
+            c = join_col(i)
+            res[:,i] = c
+        return np.vstack((res, blk2[self.overlap_size:,:]))
     
-def get_block(img, y, x, block_size, overlap_size):
-    dx = max(0, x*(block_size-overlap_size))
-    dy = max(0, y*(block_size-overlap_size))
-    return img[dy:dy+block_size,dx:dx+block_size,:].copy()
-           
-def debug_horizontal_join(blk1, blk2, path, overlap_size, block_size):
-    G = [[0,255,0]] # green pixel
-    sl1 = blk1[:,-overlap_size:]
-    sl2 = blk2[:,:overlap_size]
-    bar = np.zeros((block_size, 1, 3), dtype=int)
-    img = np.hstack((blk1, bar, sl1, bar, sl2, bar, blk2))  
-    plt.imshow(img)
-    plt.show()
-    a = path[0]
-    print(len(path),path)
-    concat = lambda i : np.concatenate((sl1[i,:max(0, a-1)], G, sl2[i,max(a, 1):]))
-    c = concat(0)
-    res = np.zeros((block_size, overlap_size, 3), dtype=np.int32)
-    res[0,:] = c
-    for i in range(1, block_size):
-        a = path[i]
-        c = concat(i)
-        res[i,:] = c
-    img = np.hstack((blk1[:,:-overlap_size], bar, res, bar, blk2[:,overlap_size:]))  
-    plt.imshow(img)
-    plt.show()
-    img = np.hstack((blk1[:,:-overlap_size], res, blk2[:,overlap_size:]))  
-    plt.imshow(img)
-    plt.show()
-   
-debug = False
+    def get_random_pattern(self):
+        i = random.randint(0, len(self.patterns))
+        return self.patterns[i].data
+
+    def get_best(self, blks, orientation):
+        pq = []
+        pq_N = 1
+        heapq.heapify(pq) 
+        sample = random.sample(self.patterns, self.sample_size)
+        for patt in sample:
+            blk = patt.data
+            if orientation != Orientation.BOTH:
+                l2 = Minimum_Cost_Path.calc_L2_error(blks[0], blk, 
+                            self.block_size, self.overlap_size, orientation)
+                err = l2.sum()
+            else:
+                l2u = Minimum_Cost_Path.calc_L2_error(blks[0], blk, 
+                            self.block_size, self.overlap_size, Orientation.BOTTOM_TOP)
+                l2l = Minimum_Cost_Path.calc_L2_error(blks[1], blk, 
+                            self.block_size, self.overlap_size, Orientation.RIGHT_LEFT)
+                err = l2u.sum() + l2l.sum()
+            pqe = (-err, blk)
+            if len(pq) < pq_N:
+                heapq.heappush(pq, pqe)
+            else:
+                try:
+                    heapq.heappushpop(pq, pqe)
+                except ValueError:
+                    # skip errors related to duplicate values
+                    pass            
+        return random.sample(pq, 1)[0][1]
+
+    def add_block(self, blk, y, x):
+        dx = max(0, x*(self.block_size-self.overlap_size))
+        dy = max(0, y*(self.block_size-self.overlap_size))
+        self.output_image[dy:dy+self.block_size,dx:dx+self.block_size,:] = blk.copy()
+    
+    def get_block(self, y, x):
+        dx = max(0, x*(self.block_size-self.overlap_size))
+        dy = max(0, y*(self.block_size-self.overlap_size))
+        return self.output_image[dy:dy+self.block_size,dx:dx+self.block_size,:].copy()
+      
+    def generate(self, sample_size=1, debug=False, show_progress=False):
+        self.debug = debug
+        self.sample_size = int(np.ceil(len(self.patterns)*sample_size))
+        self.output_image = np.zeros((self.image_size, self.image_size, 3), dtype=np.int)
+        for i in range(self.number_of_tiles_in_output):
+            for j in range(self.number_of_tiles_in_output):
+                if show_progress: print('\rProgress : (%d,%d)  ' % (i+1,j+1), end = '', flush=True)
+                if i == 0 and j == 0:
+                    self.output_image[:block_size,:block_size] = self.get_random_pattern()
+                elif i == 0 and j > 0:
+                    blk1 = self.get_block(0, j-1) # up
+                    blk2 = self.get_best((blk1,), Orientation.RIGHT_LEFT)
+                    mcp = Minimum_Cost_Path(blk1, blk2, self.overlap_size, Orientation.RIGHT_LEFT) 
+                    out = self.join_horizontal_blocks(blk1, blk2, mcp.path)
+                    self.add_block(out, i, j)
+                elif i > 0 and j == 0:
+                    blk1 = self.get_block(i-1, 0) # left
+                    blk2 = self.get_best((blk1,), Orientation.BOTTOM_TOP)
+                    mcp = Minimum_Cost_Path(blk1, blk2, self.overlap_size, Orientation.BOTTOM_TOP)
+                    out = self.join_vertical_blocks(blk1, blk2, mcp.path)
+                    self.add_block(out, i, j)
+                elif i > 0 and j > 0:
+                    blk1 = self.get_block(i-1, j) # up
+                    blk2 = self.get_block(i, j-1) # left
+                    blk3 = self.get_best((blk1, blk2), Orientation.BOTH)
+                    mcp1 = Minimum_Cost_Path(blk1, blk3, self.overlap_size, Orientation.BOTTOM_TOP)
+                    mcp2 = Minimum_Cost_Path(blk2, blk3, self.overlap_size, Orientation.RIGHT_LEFT)
+                    assert mcp1 != mcp2
+                    out1 = self.join_vertical_blocks(blk1, blk3, mcp1.path)
+                    out2 = self.join_horizontal_blocks(blk2, out1, mcp2.path)
+                    out1.shape == out2.shape
+                    self.add_block(out2, i, j)                
+        
+        return self.output_image
+    
 block_size = 30
 overlap_size = block_size//6
 number_of_tiles_in_output = 10 # output image widht in tiles
 
-IMG_SIZE=(2*(block_size-overlap_size)) + \
-    ((number_of_tiles_in_output-2)*(block_size-2*overlap_size)) + \
-    ((number_of_tiles_in_output-1)*overlap_size)
-    
 if __name__ == '__main__':
     random.seed(42)
     np.random.seed(42)
-    img_source = plt.imread('mesh.jpg')
-    img_output = np.zeros(img_source.shape, dtype=np.int32)
-    plt.imshow(img_source)
+    
+    source_image = plt.imread('images/mesh.jpg')
+    plt.imshow(source_image)
     plt.show()
     
-    patterns = PatternsFromSample(img_source, block_size)
-    random.shuffle(patterns)
-    print('Number of patterns = {}'.format(len(patterns)))
+    iq = Image_Quilting(source_image, block_size, overlap_size, number_of_tiles_in_output)
+    print('Number of patterns = {}'.format(len(iq.patterns)))
+    output_image = iq.generate(sample_size=1, debug=False, show_progress=True)
     
-    sample_size = len(patterns)
-    img = np.zeros((IMG_SIZE, IMG_SIZE, 3), dtype=np.int)
-    for i in range(number_of_tiles_in_output):
-        for j in range(number_of_tiles_in_output):
-            print('\rProgress : (%d,%d)' % (i,j), end = '', flush=True)
-            if i == 0 and j == 0:
-                img[:block_size,:block_size] = get_random_pattern(patterns)
-                img_dbg = img
-            elif i == 0 and j > 0:
-                blk1 = get_block(img, 0, j-1, block_size, overlap_size) # up
-                blk2 = get_best(patterns, (blk1,), sample_size, Orientation.RIGHT_LEFT)
-                mcp = Minimum_Cost_Path(blk1, blk2, overlap_size, Orientation.RIGHT_LEFT) 
-                out = join_horizontal_blocks(blk1, blk2, mcp.path, debug=debug)
-                add_block(img, out, i, j, block_size, overlap_size)
-            elif i > 0 and j == 0:
-                blk1 = get_block(img, i-1, 0, block_size, overlap_size) # left
-                blk2 = get_best(patterns, (blk1,), sample_size, Orientation.BOTTOM_TOP)
-                mcp = Minimum_Cost_Path(blk1, blk2, overlap_size, Orientation.BOTTOM_TOP)
-                out = join_vertical_blocks(blk1, blk2, mcp.path, debug=debug)
-                add_block(img, out, i, j, block_size, overlap_size)
-            elif i > 0 and j > 0:
-                blk1 = get_block(img, i-1, j, block_size, overlap_size) # up
-                blk2 = get_block(img, i, j-1, block_size, overlap_size) # left
-                blk3 = get_best(patterns, (blk1, blk2), sample_size, Orientation.BOTH)
-                mcp1 = Minimum_Cost_Path(blk1, blk3, overlap_size, Orientation.BOTTOM_TOP)
-                mcp2 = Minimum_Cost_Path(blk2, blk3, overlap_size, Orientation.RIGHT_LEFT)
-                out1 = join_vertical_blocks(blk1, blk3, mcp1.path, debug=debug)
-                out2 = join_horizontal_blocks(blk2, out1, mcp2.path, debug=debug)
-                assert mcp1 != mcp2
-                add_block(img, out2, i, j, block_size, overlap_size)                
-
     plt.figure(figsize=(10,10))
-    plt.imshow(img)
+    plt.imshow(output_image)
     plt.show()
