@@ -5,7 +5,7 @@ Created on Wed Mar 20 11:35:50 2019
 
 @author: Renato B. Arantes
 
-This is my implementation/interpretation of the article 
+This is my implementation/interpretation of the article
 "Image Quilting for Textture Synthesis and Transfer"
 
 I'm only interested in minimum error boundary cut.
@@ -14,20 +14,18 @@ I'm only interested in minimum error boundary cut.
 import os
 import sys
 import heapq
-import random
 import numpy as np
 import matplotlib.pyplot as plt
 
-from torch.utils.data.dataset import Dataset
 from concurrent import futures
 from itertools import product
 
-class PatternsDataset(Dataset):
+class PatternsDataset():
     def __init__(self, patterns, transform=None):
         self.patterns = patterns
         self.count = len(self.patterns)
         self.transform = transform
-        
+
     def __getitem__(self, index):
         data = self.patterns[index].data.astype(np.float)
         data = self.transform(data)
@@ -35,21 +33,21 @@ class PatternsDataset(Dataset):
 
     def __len__(self):
         return self.count
-    
+
 class Pattern:
     def __init__(self, data, N):
         self.data = data.astype(np.int)
         self.N = N
-        
+
     def __eq__(self, other):
         return (self.data==other.data).all()
-    
+
     def offs(self,d,inv=False):
         d = tuple(map(lambda x:-x, d) if inv else d)
         return Pattern(self.data[max(0,d[0]):min(self.N+d[0],self.N),max(0,d[1]):min(self.N+d[1],self.N)])
-    
+
     def isCompatible(self,d,other,inv=False):
-        return (self.offs(d).data==other.offs(d,inv=True).data).all()    
+        return (self.offs(d).data==other.offs(d,inv=True).data).all()
 
     def __hash__(self):
         return hash(self.data.tobytes())
@@ -60,12 +58,12 @@ class CreatePattern:
         self.ref = ref
         self.rot = rot
         self.N = N
-        
+
     def __call__(self, t):
         i = t[0]
         j = t[1]
         t = Pattern(self.sample.take(range(i,i+self.N),mode='raise', axis=0).
-                                take(range(j,j+self.N),mode='raise',axis=1), 
+                                take(range(j,j+self.N),mode='raise',axis=1),
                                 self.N)
         res = set([t])
         if self.ref: res.add(Pattern(np.fliplr(t.data), self.N))
@@ -77,40 +75,40 @@ class Orientation:
         RIGHT_LEFT = 1
         BOTTOM_TOP = 2
         BOTH = 3
-    
+
 class Minimum_Cost_Path:
     def __init__(self, blk1, blk2, overlap_size, orientation):
         assert blk1.shape == blk2.shape
         assert blk1.shape[0] == blk2.shape[1]
-        # get the overlap regions      
+        # get the overlap regions
         block_size = blk1.shape[0]
         # calculate LE error for the overlap region
-        self.L2_error = self.calc_L2_error(blk1, blk2, block_size, 
+        self.L2_error = self.calc_L2_error(blk1, blk2, block_size,
                                               overlap_size, orientation)
         # calculate the minimum cost matrix
-        self.calc_cost() 
+        self.calc_cost()
         # now calculate the minimum cost path
-        self.path = self.minimum_cost_path()   
-        
+        self.path = self.minimum_cost_path()
+
     def get_cost_at(self, i, j):
         if i < 0 or i >= self.cost.shape[0] or \
            j <= 0 or j >= self.cost.shape[1]-1:
                return sys.maxsize
         return self.cost[i][j]
-    
+
     def get_costs(self, i, j):
         x = self.get_cost_at(i-1, j-1)
         y = self.cost[i-1][j]
         z = self.get_cost_at(i-1, j+1)
         return x, y, z
-        
+
     def min_index(self, i, j):
         x, y, z = self.get_costs(i, j)
-        if (x < y): 
+        if (x < y):
             return j-1 if (x < z) else j+1
-        else: 
+        else:
             return j if (y < z) else j+1
-                
+
     def minimum_cost_path(self):
         rows, cols = self.cost.shape
         p = [np.argmin(self.cost[rows-1,:])]
@@ -120,12 +118,12 @@ class Minimum_Cost_Path:
             p.append(self.min_index(i, j))
         p.reverse()
         return p
-        
+
     def calc_cost(self):
         self.cost = np.zeros(self.L2_error.shape, dtype=np.int)
         # we don't need to calculate the first row
         self.cost[0,:] = self.L2_error[0,:]
-        rows, cols = self.cost.shape        
+        rows, cols = self.cost.shape
         for i in range(1, rows):
             for j in range(cols):
                 x, y, z = self.get_costs(i, j)
@@ -138,10 +136,10 @@ class Minimum_Cost_Path:
             ov2 = blk2[:,:overlap_size] # left
         elif orientation == Orientation.BOTTOM_TOP:
             ov1 = np.transpose(blk1[-overlap_size:,:], (1,0,2)) # bottom
-            ov2 = np.transpose(blk2[:overlap_size,:], (1,0,2)) # top            
+            ov2 = np.transpose(blk2[:overlap_size,:], (1,0,2)) # top
         assert ov1.shape == ov2.shape
         return ov1, ov2
-    
+
     @staticmethod
     def calc_L2_error(blk1, blk2, block_size, overlap_size, orientation):
         ov1, ov2 = Minimum_Cost_Path.get_overlap(blk1, blk2, block_size, overlap_size, orientation)
@@ -154,13 +152,13 @@ class Image_Quilting:
         self.block_size = block_size
         self.overlap_size = overlap_size
         self.number_of_tiles_in_output = number_of_tiles_in_output
-        
+
         self.image_size = (2*(block_size-overlap_size)) + \
             ((number_of_tiles_in_output-2)*(block_size-2*overlap_size)) + \
             ((number_of_tiles_in_output-1)*overlap_size)
-            
+
         self.patterns = self.patterns_from_sample(source_image)
-        random.shuffle(self.patterns)            
+        np.random.shuffle(self.patterns)
 
     def patterns_from_sample(self, source_image):
         patts = set()
@@ -168,12 +166,12 @@ class Image_Quilting:
         h, w, _ = source_image.shape
         with futures.ProcessPoolExecutor() as pool:
             createPattern = CreatePattern(source_image, N)
-            for ident, toappend in pool.map(createPattern, 
+            for ident, toappend in pool.map(createPattern,
                                             product(range(0, h-N), range(0, w-N)),
                                             chunksize=w):
                 patts.update(toappend)
         return list(patts)
-        
+
     def join_horizontal_blocks(self, blk1, blk2, path):
         G = [[0,255,0]] # green pixel
         sl1 = blk1[:,-self.overlap_size:]
@@ -191,7 +189,7 @@ class Image_Quilting:
             c = join_row(i)
             res[i,:] = c
         return np.hstack((res, blk2[:,self.overlap_size:]))
-     
+
     def join_vertical_blocks(self, blk1, blk2, path):
         G = [[0,255,0]] # green pixel
         sl1 = blk1[-self.overlap_size:,:]
@@ -209,26 +207,26 @@ class Image_Quilting:
             c = join_col(i)
             res[:,i] = c
         return np.vstack((res, blk2[self.overlap_size:,:]))
-    
+
     def get_random_pattern(self):
-        i = random.randint(0, len(self.patterns))
+        i = np.random.randint(0, high=len(self.patterns))
         return self.patterns[i].data
 
     def get_best(self, blks, orientation):
         pq = []
         pq_N = 1
-        heapq.heapify(pq) 
-        sample = random.sample(self.patterns, self.sample_size)
+        heapq.heapify(pq)
+        sample = np.random.choice(self.patterns, size=self.sample_size, replace=False)
         for patt in sample:
             blk = patt.data
             if orientation != Orientation.BOTH:
-                l2 = Minimum_Cost_Path.calc_L2_error(blks[0], blk, 
+                l2 = Minimum_Cost_Path.calc_L2_error(blks[0], blk,
                             self.block_size, self.overlap_size, orientation)
                 err = l2.sum()
             else:
-                l2u = Minimum_Cost_Path.calc_L2_error(blks[0], blk, 
+                l2u = Minimum_Cost_Path.calc_L2_error(blks[0], blk,
                             self.block_size, self.overlap_size, Orientation.BOTTOM_TOP)
-                l2l = Minimum_Cost_Path.calc_L2_error(blks[1], blk, 
+                l2l = Minimum_Cost_Path.calc_L2_error(blks[1], blk,
                             self.block_size, self.overlap_size, Orientation.RIGHT_LEFT)
                 err = l2u.sum() + l2l.sum()
             pqe = (-err, blk)
@@ -239,19 +237,20 @@ class Image_Quilting:
                     heapq.heappushpop(pq, pqe)
                 except ValueError:
                     # skip errors related to duplicate values
-                    pass            
-        return random.sample(pq, 1)[0][1]
+                    print('ValueError!!!:(')
+        idx = np.random.choice(len(pq), 1)[0]
+        return pq[idx][1]
 
     def add_block(self, blk, y, x):
         dx = max(0, x*(self.block_size-self.overlap_size))
         dy = max(0, y*(self.block_size-self.overlap_size))
         self.output_image[dy:dy+self.block_size,dx:dx+self.block_size,:] = blk.copy()
-    
+
     def get_block(self, y, x):
         dx = max(0, x*(self.block_size-self.overlap_size))
         dy = max(0, y*(self.block_size-self.overlap_size))
         return self.output_image[dy:dy+self.block_size,dx:dx+self.block_size,:].copy()
-      
+
     def generate(self, sample_size=1, debug=False, show_progress=False):
         self.debug = debug
         self.sample_size = int(np.ceil(len(self.patterns)*sample_size))
@@ -260,11 +259,11 @@ class Image_Quilting:
             for j in range(self.number_of_tiles_in_output):
                 if show_progress: print('\rProgress : (%d,%d)  ' % (i+1,j+1), end = '', flush=True)
                 if i == 0 and j == 0:
-                    self.output_image[:block_size,:block_size] = self.get_random_pattern()
+                    self.output_image[:self.block_size,:self.block_size] = self.get_random_pattern()
                 elif i == 0 and j > 0:
                     blk1 = self.get_block(0, j-1) # up
                     blk2 = self.get_best((blk1,), Orientation.RIGHT_LEFT)
-                    mcp = Minimum_Cost_Path(blk1, blk2, self.overlap_size, Orientation.RIGHT_LEFT) 
+                    mcp = Minimum_Cost_Path(blk1, blk2, self.overlap_size, Orientation.RIGHT_LEFT)
                     out = self.join_horizontal_blocks(blk1, blk2, mcp.path)
                     self.add_block(out, i, j)
                 elif i > 0 and j == 0:
@@ -283,26 +282,26 @@ class Image_Quilting:
                     out1 = self.join_vertical_blocks(blk1, blk3, mcp1.path)
                     out2 = self.join_horizontal_blocks(blk2, out1, mcp2.path)
                     out1.shape == out2.shape
-                    self.add_block(out2, i, j)                
-        
+                    self.add_block(out2, i, j)
+
         return self.output_image
-    
-block_size = 30
+
+block_size = 40
 overlap_size = block_size//6
 number_of_tiles_in_output = 10 # output image widht in tiles
 
 if __name__ == '__main__':
-    random.seed(42)
     np.random.seed(42)
-    
-    source_image = plt.imread('images/mesh.jpg')
+
+    source_image = plt.imread('images/apple.jpg')
     plt.imshow(source_image)
     plt.show()
-    
+
     iq = Image_Quilting(source_image, block_size, overlap_size, number_of_tiles_in_output)
     print('Number of patterns = {}'.format(len(iq.patterns)))
-    output_image = iq.generate(sample_size=1, debug=False, show_progress=True)
-    
-    plt.figure(figsize=(10,10))
-    plt.imshow(output_image)
-    plt.show()
+    for i in range(1):
+        output_image = iq.generate(sample_size=1, debug=False, show_progress=True)
+        plt.figure(figsize=(10,10))
+        plt.title('Vegas #{}: bs={}, os={}'.format(i+1, block_size, overlap_size))
+        plt.imshow(output_image)
+        plt.show()
