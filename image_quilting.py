@@ -14,6 +14,7 @@ I'm only interested in minimum error boundary cut.
 import os
 import sys
 import heapq
+import torch
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -27,16 +28,16 @@ class PatternsDataset():
         self.transform = transform
 
     def __getitem__(self, index):
-        data = self.patterns[index].data.astype(np.float)
+        data = self.patterns[index].data.astype(np.float32)
         data = self.transform(data)
         return (data, 0)
 
     def __len__(self):
-        return self.count
+        return self.countiq.patterns[0].data
 
 class Pattern:
     def __init__(self, data, N):
-        self.data = data.astype(np.int)
+        self.data = torch.as_tensor(data.astype(np.float32)).to('cuda:0')
         self.N = N
 
     def __eq__(self, other):
@@ -120,7 +121,7 @@ class Minimum_Cost_Path:
         return p
 
     def calc_cost(self):
-        self.cost = np.zeros(self.L2_error.shape, dtype=np.int)
+        self.cost = np.zeros(self.L2_error.shape, dtype=np.float32)
         # we don't need to calculate the first row
         self.cost[0,:] = self.L2_error[0,:]
         rows, cols = self.cost.shape
@@ -182,7 +183,7 @@ class Image_Quilting:
         else:
             join_row = lambda i : np.concatenate((sl1[i,:a], sl2[i,a:]))
         c = join_row(0)
-        res = np.zeros((self.block_size, self.overlap_size, 3), dtype=np.int)
+        res = np.zeros((self.block_size, self.overlap_size, 3), dtype=np.float32)
         res[0,:] = c
         for i in range(1, self.block_size):
             a = path[i]
@@ -200,7 +201,7 @@ class Image_Quilting:
         else:
             join_col = lambda i : np.concatenate((sl1[:a,i], sl2[a:,i]))
         c = join_col(0)
-        res = np.zeros((self.overlap_size, self.block_size, 3), dtype=np.int)
+        res = np.zeros((self.overlap_size, self.block_size, 3), dtype=np.float32)
         res[:,0] = c
         for i in range(1, self.block_size):
             a = path[i]
@@ -214,7 +215,7 @@ class Image_Quilting:
 
     def get_best(self, blks, orientation):
         pq = []
-        pq_N = 1
+        pq_N = 5
         heapq.heapify(pq)
         sample = np.random.choice(self.patterns, size=self.sample_size, replace=False)
         for patt in sample:
@@ -237,7 +238,7 @@ class Image_Quilting:
                     heapq.heappushpop(pq, pqe)
                 except ValueError:
                     # skip errors related to duplicate values
-                    print('ValueError!!!:(')
+                    print('ValueError!!!:( => {}'.format(pqe))
         idx = np.random.choice(len(pq), 1)[0]
         return pq[idx][1]
 
@@ -254,7 +255,7 @@ class Image_Quilting:
     def generate(self, sample_size=1, debug=False, show_progress=False):
         self.debug = debug
         self.sample_size = int(np.ceil(len(self.patterns)*sample_size))
-        self.output_image = np.zeros((self.image_size, self.image_size, 3), dtype=np.int)
+        self.output_image = np.zeros((self.image_size, self.image_size, 3), dtype=np.float32)
         for i in range(self.number_of_tiles_in_output):
             for j in range(self.number_of_tiles_in_output):
                 if show_progress: print('\rProgress : (%d,%d)  ' % (i+1,j+1), end = '', flush=True)
@@ -286,22 +287,37 @@ class Image_Quilting:
 
         return self.output_image
 
-block_size = 40
+block_size = 64
 overlap_size = block_size//6
 number_of_tiles_in_output = 10 # output image widht in tiles
 
-if __name__ == '__main__':
-    np.random.seed(42)
+def load_source_image():
+    I1 = plt.imread('/home/CAMPUS/180178991/Pictures/CMP_facade_DB_base/labels.black.small/cmp_b0001-small.png')[:,:,:3]
 
-    source_image = plt.imread('images/apple.jpg')
-    plt.imshow(source_image)
+    print('I1.shape={}, I1.dtype={}, I1.max={}, I1.min={}'.format(
+          I1.shape, I1.dtype, I1.max(), I1.min()))
+
+    I1 = (I1-I1.min()) / (I1.max()-I1.min())
+    I1 = I1.astype(np.float32)
+    assert I1.min() >= 0. and I1.max() <= 1.
+    plt.imshow(I1)
     plt.show()
 
+    print('I1.shape={}, I1.dtype={}, I1.max={}, I1.min={}'.format(
+          I1.shape, I1.dtype, I1.max(), I1.min()))
+
+    return I1
+
+if __name__ == '__main__':
+    np.random.seed(999)
+    source_image = load_source_image()
     iq = Image_Quilting(source_image, block_size, overlap_size, number_of_tiles_in_output)
     print('Number of patterns = {}'.format(len(iq.patterns)))
-    for i in range(1):
+    for i in range(10):
         output_image = iq.generate(sample_size=1, debug=False, show_progress=True)
-        plt.figure(figsize=(10,10))
-        plt.title('Vegas #{}: bs={}, os={}'.format(i+1, block_size, overlap_size))
+        plt.figure(figsize=(5,5))
+        plt.axis("off")
+       # plt.title('Facade #{}: bs={}, os={}'.format(i+1, block_size, overlap_size))
         plt.imshow(output_image)
         plt.show()
+        plt.imsave('/home/CAMPUS/180178991/Desenv/gan/image_quilting/output/cmp_b0001-small.jpg/Pure_IQ_Desktop_10x10_{}.png'.format(i), output_image)
