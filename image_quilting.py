@@ -14,12 +14,36 @@ I'm only interested in minimum error boundary cut.
 import os
 import sys
 import heapq
-import torch
+import argparse
+import datetime
 import numpy as np
 import matplotlib.pyplot as plt
 
 from concurrent import futures
 from itertools import product
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--debug', required=False, default=True, help='debug mode')
+parser.add_argument('--manualSeed', type=int, default=999, help='manual seed')
+parser.add_argument('--inputImage', required=True, help='to be processed image path')
+parser.add_argument('--outputFolder', required=True, help='folder to output images')
+
+opt = parser.parse_args()
+
+basename = os.path.basename(opt.inputImage)
+stamp = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+opt.outputFolder += '/' + basename + '/image_quilting/' + stamp + "/"
+if not os.access(opt.outputFolder, os.F_OK):
+    os.makedirs(opt.outputFolder)
+else:
+    raise Exception('Output folder already exists: {}'.format(opt.outputFolder))
+
+print ("outputFolder:"+opt.outputFolder)
+
+text_file = open(opt.outputFolder+"options.txt", "w")
+text_file.write(str(opt))
+text_file.close()
+print (opt)
 
 class PatternsDataset():
     def __init__(self, patterns, transform=None):
@@ -37,7 +61,7 @@ class PatternsDataset():
 
 class Pattern:
     def __init__(self, data, N):
-        self.data = torch.as_tensor(data.astype(np.float32)).to('cuda:0')
+        self.data = data.astype(np.float32)
         self.N = N
 
     def __eq__(self, other):
@@ -133,11 +157,11 @@ class Minimum_Cost_Path:
     @staticmethod
     def get_overlap(blk1, blk2, block_size, overlap_size, orientation):
         if orientation == Orientation.RIGHT_LEFT:
-            ov1 = blk1[:,-overlap_size:] # right
-            ov2 = blk2[:,:overlap_size] # left
+            ov1 = blk1[:,-overlap_size:,:3] # right
+            ov2 = blk2[:,:overlap_size,:3] # left
         elif orientation == Orientation.BOTTOM_TOP:
-            ov1 = np.transpose(blk1[-overlap_size:,:], (1,0,2)) # bottom
-            ov2 = np.transpose(blk2[:overlap_size,:], (1,0,2)) # top
+            ov1 = np.transpose(blk1[-overlap_size:,:,:3], (1,0,2)) # bottom
+            ov2 = np.transpose(blk2[:overlap_size,:,:3], (1,0,2)) # top
         assert ov1.shape == ov2.shape
         return ov1, ov2
 
@@ -157,6 +181,7 @@ class Image_Quilting:
         self.image_size = (2*(block_size-overlap_size)) + \
             ((number_of_tiles_in_output-2)*(block_size-2*overlap_size)) + \
             ((number_of_tiles_in_output-1)*overlap_size)
+        self.image_channels = source_image.shape[2]
 
         self.patterns = self.patterns_from_sample(source_image)
         np.random.shuffle(self.patterns)
@@ -183,7 +208,7 @@ class Image_Quilting:
         else:
             join_row = lambda i : np.concatenate((sl1[i,:a], sl2[i,a:]))
         c = join_row(0)
-        res = np.zeros((self.block_size, self.overlap_size, 3), dtype=np.float32)
+        res = np.zeros((self.block_size, self.overlap_size, self.image_channels), dtype=np.float32)
         res[0,:] = c
         for i in range(1, self.block_size):
             a = path[i]
@@ -201,7 +226,7 @@ class Image_Quilting:
         else:
             join_col = lambda i : np.concatenate((sl1[:a,i], sl2[a:,i]))
         c = join_col(0)
-        res = np.zeros((self.overlap_size, self.block_size, 3), dtype=np.float32)
+        res = np.zeros((self.overlap_size, self.block_size, self.image_channels), dtype=np.float32)
         res[:,0] = c
         for i in range(1, self.block_size):
             a = path[i]
@@ -255,7 +280,7 @@ class Image_Quilting:
     def generate(self, sample_size=1, debug=False, show_progress=False):
         self.debug = debug
         self.sample_size = int(np.ceil(len(self.patterns)*sample_size))
-        self.output_image = np.zeros((self.image_size, self.image_size, 3), dtype=np.float32)
+        self.output_image = np.zeros((self.image_size, self.image_size, self.image_channels), dtype=np.float32)
         for i in range(self.number_of_tiles_in_output):
             for j in range(self.number_of_tiles_in_output):
                 if show_progress: print('\rProgress : (%d,%d)  ' % (i+1,j+1), end = '', flush=True)
@@ -291,33 +316,29 @@ block_size = 64
 overlap_size = block_size//6
 number_of_tiles_in_output = 10 # output image widht in tiles
 
-def load_source_image():
-    I1 = plt.imread('/home/CAMPUS/180178991/Pictures/CMP_facade_DB_base/labels.black.small/cmp_b0001-small.png')[:,:,:3]
+def load_source_image(source_path):
+    I1 = plt.imread(source_path)
 
     print('I1.shape={}, I1.dtype={}, I1.max={}, I1.min={}'.format(
           I1.shape, I1.dtype, I1.max(), I1.min()))
 
-    I1 = (I1-I1.min()) / (I1.max()-I1.min())
-    I1 = I1.astype(np.float32)
+#    I1 = (I1-I1.min()) / (I1.max()-I1.min())
+#    I1 = I1.astype(np.float32)
     assert I1.min() >= 0. and I1.max() <= 1.
-    plt.imshow(I1)
-    plt.show()
-
-    print('I1.shape={}, I1.dtype={}, I1.max={}, I1.min={}'.format(
-          I1.shape, I1.dtype, I1.max(), I1.min()))
+#    plt.imshow(I1)
+#    plt.show()
+#
+#    print('I1.shape={}, I1.dtype={}, I1.max={}, I1.min={}'.format(
+#          I1.shape, I1.dtype, I1.max(), I1.min()))
 
     return I1
 
 if __name__ == '__main__':
-    np.random.seed(999)
-    source_image = load_source_image()
+    np.random.seed(opt.manualSeed)
+    source_image = load_source_image(opt.inputImage)
     iq = Image_Quilting(source_image, block_size, overlap_size, number_of_tiles_in_output)
     print('Number of patterns = {}'.format(len(iq.patterns)))
-    for i in range(10):
+    for i in range(5):
         output_image = iq.generate(sample_size=1, debug=False, show_progress=True)
-        plt.figure(figsize=(5,5))
-        plt.axis("off")
-       # plt.title('Facade #{}: bs={}, os={}'.format(i+1, block_size, overlap_size))
-        plt.imshow(output_image)
-        plt.show()
-        plt.imsave('/home/CAMPUS/180178991/Desenv/gan/image_quilting/output/cmp_b0001-small.jpg/Pure_IQ_Desktop_10x10_{}.png'.format(i), output_image)
+        plt.imsave(os.path.join(opt.outputFolder, 'iq_{}x{}_{}.png').
+                   format(number_of_tiles_in_output, number_of_tiles_in_output, i), output_image)
