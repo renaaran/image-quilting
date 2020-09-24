@@ -1,2 +1,2 @@
 # Image Quilting
-Based on paper "Image Quilting for Texture Synthesis and Transfer"
+Based on the paper "Image Quilting for Texture Synthesis and Transfer".
